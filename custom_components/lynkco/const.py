@@ -21,6 +21,16 @@ CONFIG_SCAN_INTERVAL_KEY = "scan_interval"
 CONFIG_DARK_HOURS_START = "dark_hours_start"
 CONFIG_DARK_HOURS_END = "dark_hours_end"
 
+# Smart polling config keys
+CONFIG_SMART_POLLING_ENABLED = "smart_polling_enabled"
+CONFIG_ACTIVE_HOURS_START = "active_hours_start"
+CONFIG_ACTIVE_HOURS_END = "active_hours_end"
+CONFIG_NORMAL_INTERVAL_MIN = "normal_interval_min"
+CONFIG_NORMAL_INTERVAL_MAX = "normal_interval_max"
+CONFIG_CHARGING_INTERVAL_MIN = "charging_interval_min"
+CONFIG_CHARGING_INTERVAL_MAX = "charging_interval_max"
+CONFIG_CHARGING_TARGET_PERCENT = "charging_target_percent"
+
 # Hass data constants
 DATA_EXPECTED_STATE = "expected_state_monitor"
 DATA_IS_FORCE_UPDATE = "is_force_update"

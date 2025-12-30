@@ -1,135 +1,475 @@
-# Lynk & Co Home Assistant Custom Component
+# Lynk & Co Home Assistant Integration
 
-## Note
-I will no longer be maintaining this repository, Lynk will soon break the integration but also remove the start_engine endpoint.
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/johnneerdael/Lynk-Co-HA)](https://github.com/johnneerdael/Lynk-Co-HA/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Introduction
-This custom component allows Home Assistant users to integrate and control their Lynk & Co vehicles directly from Home Assistant.
-It provides the functionality for multiple users to control pre climate and sensor monitoring.
-An experimental service to start and stop the engine is included as well as lock and unlock doors, and monitor various vehicle
-statuses like battery level, fuel level, and climate control status, enhancing the smart home experience with vehicle management.
-This has been tested on european models only.
+A custom Home Assistant integration for Lynk & Co vehicles. Monitor your vehicle's status, control climate, locks, and more directly from Home Assistant.
+
+> **⚠️ European Models Only**: This integration has only been tested with European Lynk & Co models.
 
 ## Table of Contents
-- [Warning](#warning-warning)
-- [Introduction](#introduction)
+
+- [Features](#features)
 - [Installation](#installation)
-  - [Prerequisites](#prerequisites)
-  - [Adding the Custom Repository to HACS](#adding-the-custom-repository-to-hacs)
-  - [Installing the Integration](#installing-the-integration)
+  - [HACS Installation (Recommended)](#hacs-installation-recommended)
+  - [Manual Installation](#manual-installation)
 - [Configuration](#configuration)
-  - [Initial Setup](#initial-setup)
-  - [Options Flow](#options-flow)
-- [Features and Usage](#features-and-usage)
-  - [Services](#services)
-  - [Entities](#entities)
+  - [Step 1: Start the Integration Setup](#step-1-start-the-integration-setup)
+  - [Step 2: Authenticate via Browser](#step-2-authenticate-via-browser)
+  - [Step 3: Complete Setup](#step-3-complete-setup)
+- [Smart Polling System](#smart-polling-system)
+  - [How It Works](#how-it-works)
+  - [Configuration Options](#configuration-options)
+  - [Legacy Polling Mode](#legacy-polling-mode)
+- [Services](#services)
+  - [Climate Control](#climate-control)
+  - [Door Control](#door-control)
+  - [Horn & Lights](#horn--lights)
+  - [Engine Control (Experimental)](#engine-control-experimental)
+  - [Utility Services](#utility-services)
+- [Entities](#entities)
+  - [Binary Sensors](#binary-sensors)
+  - [Lock Entity](#lock-entity)
+  - [Device Tracker](#device-tracker)
+  - [Sensors Overview](#sensors-overview)
+- [Sensor State Values](#sensor-state-values)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [License](#license)
-- [Acknowledgements](#acknowledgements)
+
+---
+
+## Features
+
+- 🚗 **Vehicle Monitoring**: Battery level, fuel level, odometer, temperatures, and more
+- 🔒 **Lock Control**: Lock and unlock your vehicle remotely
+- ❄️ **Climate Control**: Start and stop pre-conditioning
+- 📍 **Location Tracking**: Track your vehicle's position with address resolution
+- 🔊 **Horn & Lights**: Flash lights or honk remotely to locate your vehicle
+- ⚡ **Smart Polling**: Adaptive data refresh based on charging status and time of day
+- 🔋 **EV Charging**: Monitor charging status, time to full charge, and battery range
+
+---
 
 ## Installation
 
-### Prerequisites
-Before installing this component, make sure you have:
-- Home Assistant running.
-- Access to your Lynk & Co account credentials.
-- Your vehicle's VIN.
+### HACS Installation (Recommended)
 
-### Adding the Custom Repository to HACS
-1. Navigate to HACS in Home Assistant.
-2. Go to "Integrations".
-3. Click on the three dots in the top right corner and select "Custom repositories".
-4. Enter the URL of this GitHub repository.
-5. Select "Integration" in the "Category" dropdown.
-6. Click "Add".
+1. Open HACS in your Home Assistant instance
+2. Click on **Integrations**
+3. Click the **⋮** menu (three dots) in the top right corner
+4. Select **Custom repositories**
+5. Add the repository URL: `https://github.com/johnneerdael/Lynk-Co-HA`
+6. Select **Integration** as the category
+7. Click **Add**
+8. Search for "Lynk & Co" in HACS and click **Install**
+9. **Restart Home Assistant**
 
-### Installing the Integration
-1. Find the Lynk & Co integration in the HACS Integrations section and click "Install".
-2. Restart Home Assistant.
+### Manual Installation
+
+1. Download the latest release from [GitHub Releases](https://github.com/johnneerdael/Lynk-Co-HA/releases)
+2. Extract the `lynkco` folder to your `custom_components` directory
+3. Your folder structure should look like: `config/custom_components/lynkco/`
+4. **Restart Home Assistant**
+
+---
 
 ## Configuration
-Configure this integration through the Home Assistant UI.
 
-### Initial Setup
-1. Navigate to Configuration > Integrations in Home Assistant.
-2. Click on "Add Integration" and search for "Lynk & Co".
-3. Follow the on-screen instructions to enter your vehicle details and complete the setup.
+Due to Lynk & Co's authentication system using CAPTCHA protection, this integration uses a **browser-based redirect login** method. You'll complete the login in your browser and copy a redirect URL back to Home Assistant.
 
-### Options Flow
-Options can be configured through the Options Flow in the Home Assistant UI:
+### Step 1: Start the Integration Setup
 
-1. Navigate to Configuration > Integrations.
-2. Find the Lynk & Co integration and click "Configure".
-3. Adjust settings such as scan interval and experimental features:
-   - Enable or disable experimental features.
-   - Configure the scan interval (in minutes) to control how frequently your vehicle's data is updated.
-   - Set the start and end times for "dark hours" to limit automatic data updates during certain hours.
+1. Go to **Settings** → **Devices & Services** → **Add Integration**
+2. Search for **Lynk & Co** and select it
+3. Enter your **Vehicle Identification Number (VIN)**
+   - You can find this in your Lynk & Co app or on your vehicle documents
+4. Click **Submit**
 
-## Features and Usage
-The device will auto-update once every other hour by default and is configurable in the options flow to update every 1-24 hours.
-The system seems to be more stable with longer intervals, use force_update_data service to update when needed instead. The device will also
-update itself when expecting a new state after a service has been called.
+### Step 2: Authenticate via Browser
 
-### Services
-This component offers various services to interact with your vehicle, including:
-- `start_climate` / `stop_climate`: Starts or stops the climate control system.
-- `lock_doors` / `unlock_doors`: Locks or unlocks the doors.
-- `start_flash_lights` / `stop_flash_lights`: Activates or deactivates hazard lights.
-- `start_honk` / `stop_honk`: Activates or deactivates honk.
-- `start_honk_flash`: Activates honk and hazard lights.
-- `start_engine` / `stop_engine`: Starts or stops the engine. (Note: This feature is experimental and is not documented by Lynk & Co.)
-- `force_update_data`: Forcing update data from the vehicle, bypassing night limit.
-- `refresh_tokens`: Refreshes authentication tokens, this should not be needed, handled automatically.
+1. A **login link** will be displayed - click it to open in your browser
+2. Complete the Lynk & Co login process (including any CAPTCHA and 2FA)
+3. After successful login, your browser will redirect to a URL starting with:
+   ```
+   msauth.com.lynkco.prod.lynkco-app://auth?code=...
+   ```
+4. **Copy the entire redirect URL** from your browser's address bar
 
-#### Detailed Service Information
+> **💡 Pro Tip**: In your browser's Developer Tools (F12), go to the **Network** tab and filter for `msauth://prod.lynkco.app.crisp.prod/` - the only request that appears will be the one you need. Copy the complete **Request URL**.
 
-- **start_engine / stop_engine**: This service allows you to remotely start or stop your vehicle's engine. It's an experimental feature not officially supported by the Lynk & Co app.
-Use with caution, as it may not always perform as expected. My observations are that the EV engine will be started and climate will be set to your latest configuration in the car.
-Based on discussions in #53 it seems that this command will not work without sufficient fuel in the tank.
-This has not been tested without sufficient EV battery.
+### Step 3: Complete Setup
 
-### Entities
-The integration creates entities for comprehensive monitoring and control of the Lynk & Co vehicle, including both sensors and binary sensors.
+1. Paste the copied redirect URL into the Home Assistant configuration field
+2. Click **Submit**
+3. The integration will extract the authentication tokens and complete setup
 
-#### Sensors
-Sensors provide detailed information about various aspects of the vehicle's status and environment. These include:
+> **Note**: The first data fetch is always performed immediately after setup, regardless of time restrictions.
 
-- **Lynk & Co Odometer**: Measures the total distance the vehicle has traveled in kilometers.
-- **Lynk & Co Battery**: Shows the current battery charge level as a percentage.
-- **Lynk & Co Fuel Level**: Displays the current fuel level in liters.
-- **Lynk & Co Fuel Level Status**: Indicates the status of the fuel level.
-- **Lynk & Co Fuel Distance**: Reports the estimated distance (in kilometers) that can be traveled with the remaining fuel.
-- **Lynk & Co Time Until Charged**: Provides the estimated time (in minutes) until the battery is fully charged.
-- **Lynk & Co Battery Distance**: Shows the estimated distance (in kilometers) that can be traveled on battery power alone.
-- **Lynk & Co Interior Temperature**: Reports the temperature inside the vehicle in degrees Celsius.
-- **Lynk & Co Exterior Temperature**: Displays the temperature outside the vehicle in degrees Celsius.
-- **Lynk & Co Charger Connection Status**: Indicates whether the charger is connected or disconnected.
-- **Lynk & Co Charge State**: Shows the current charging state of the vehicle.
-- **Lynk & Co Address**: Displays the vehicle's current address in a human-readable format.
-- **Lynk & Co Address Raw**: Provides the vehicle's current address in a format that includes raw data, potentially useful for integration with mapping services.
-- **Lynk & Co Door Lock Status**: Indicates the current lock status of the vehicle's doors.
-- **Lynk & Co Last Updated by Car**: Timestamp of the last update received from the vehicle.
+---
 
-#### Binary Sensors
-Binary sensors indicate specific vehicle states that have a true or false condition. These include:
+## Smart Polling System
 
-- **Pre Climate Active**: Indicates whether the pre-climate control system is active, ensuring the vehicle's interior is at a comfortable temperature before you enter. It uses the icon `mdi:air-conditioner` to visually represent this feature in the Home Assistant UI.
-- **Vehicle is Running**: Shows if the vehicle's engine is currently running. This sensor is on if car is running either normally or by start engine service.
+The integration includes an intelligent polling system designed to minimize API calls while ensuring fresh data when you need it most (e.g., during EV charging).
 
-For a comprehensive list of all entities, including detailed descriptions and additional sensors, please refer to [Detailed Entities Information](entities.md).
+### How It Works
+
+| Time Period | Condition | Polling Interval |
+|------------|-----------|------------------|
+| **Active Hours** | Normal operation | 20-40 minutes (randomized) |
+| **Active Hours** | Charger connected + Battery < target | 8-12 minutes (randomized) |
+| **Dark Hours** | Outside active hours | No polling until next active period |
+| **Any Time** | Manual `force_update_data` | Immediate update |
+
+**Key behaviors:**
+- **Randomized intervals**: Polling times are randomized within ranges to avoid predictable API patterns
+- **Randomized active hours**: Start/end times have a random 0-20 minute offset (changes daily)
+- **Charging detection**: Faster polling when `charger_connection_status` is `CHARGER_CONNECTION_CONNECTED_WITH_POWER` AND battery is below target
+- **Initial setup**: First data fetch always runs, regardless of time restrictions
+
+### Configuration Options
+
+Access these options via **Settings** → **Devices & Services** → **Lynk & Co** → **Configure**:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| **Enable Smart Polling** | On | Toggle between smart polling and legacy fixed-interval mode |
+| **Active Hours Start** | 10 | Hour when active polling begins (plus random 0-20 min offset) |
+| **Active Hours End** | 22 | Hour when active polling ends (plus random 0-20 min offset) |
+| **Normal Interval Min** | 20 | Minimum minutes between updates during active hours |
+| **Normal Interval Max** | 40 | Maximum minutes between updates during active hours |
+| **Charging Interval Min** | 8 | Minimum minutes between updates while charging |
+| **Charging Interval Max** | 12 | Maximum minutes between updates while charging |
+| **Charging Target %** | 90 | Battery percentage above which normal intervals resume |
+
+### Legacy Polling Mode
+
+When smart polling is disabled, the integration uses the legacy fixed-interval system:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| **Scan Interval** | 120 | Minutes between data updates (15-1440) |
+| **Dark Hours Start** | 1 | Hour when automatic updates pause |
+| **Dark Hours End** | 4 | Hour when automatic updates resume |
+
+---
+
+## Services
+
+All services are available under the `lynkco` domain.
+
+### Climate Control
+
+#### `lynkco.start_climate`
+Starts the vehicle's pre-conditioning system.
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `climate_level` | No | `MEDIUM` | Intensity: `LOW`, `MEDIUM`, or `HIGH` |
+| `duration_in_minutes` | No | `15` | Duration in minutes (1-30) |
+
+```yaml
+service: lynkco.start_climate
+data:
+  climate_level: HIGH
+  duration_in_minutes: 20
+```
+
+#### `lynkco.stop_climate`
+Stops the pre-conditioning system.
+
+```yaml
+service: lynkco.stop_climate
+```
+
+### Door Control
+
+#### `lynkco.lock_doors`
+Locks all vehicle doors and trunk.
+
+```yaml
+service: lynkco.lock_doors
+```
+
+#### `lynkco.unlock_doors`
+Unlocks all vehicle doors and trunk. Doors auto-relock after 15 seconds if not opened.
+
+```yaml
+service: lynkco.unlock_doors
+```
+
+### Horn & Lights
+
+#### `lynkco.start_flash_lights`
+Activates the hazard lights/turn signals.
+
+#### `lynkco.stop_flash_lights`
+Deactivates the hazard lights.
+
+#### `lynkco.start_honk`
+Activates the horn.
+
+#### `lynkco.stop_honk`
+Stops the horn.
+
+#### `lynkco.start_honk_flash`
+Activates both horn and hazard lights simultaneously.
+
+### Engine Control (Experimental)
+
+> **⚠️ Warning**: These features are experimental and not officially supported by Lynk & Co. Enable "Experimental Features" in options to use them.
+
+#### `lynkco.start_engine`
+Remotely starts the engine. On EV/hybrid models, this starts the EV system and enables climate with your last settings.
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `duration_in_minutes` | No | `15` | Maximum runtime (1-15 minutes) |
+
+**Known limitations:**
+- May not work with insufficient fuel in the tank
+- Behavior with low EV battery is untested
+
+#### `lynkco.stop_engine`
+Stops the engine if started remotely.
+
+### Utility Services
+
+#### `lynkco.force_update_data`
+Forces an immediate data refresh, bypassing all time restrictions (dark hours/smart polling).
+
+```yaml
+service: lynkco.force_update_data
+```
+
+#### `lynkco.refresh_tokens`
+Manually refreshes authentication tokens. Usually not needed as this is handled automatically.
+
+---
+
+## Entities
+
+### Binary Sensors
+
+| Entity | Description | On State |
+|--------|-------------|----------|
+| `binary_sensor.lynk_co_pre_climate_active` | Pre-conditioning status | Climate running |
+| `binary_sensor.lynk_co_vehicle_is_running` | Engine/EV system status | Vehicle running |
+| `binary_sensor.lynk_co_position_is_trusted` | GPS position reliability | Position accurate |
+
+### Lock Entity
+
+| Entity | Description |
+|--------|-------------|
+| `lock.lynk_co_locks` | Central locking control - lock/unlock the vehicle |
+
+**Lock States:**
+- `locked` - `DOOR_LOCKS_STATUS_LOCKED` or `DOOR_LOCKS_STATUS_SAFE_LOCKED`
+- `unlocked` - Any other status
+
+### Device Tracker
+
+| Entity | Description |
+|--------|-------------|
+| `device_tracker.lynk_co_vehicle_tracker` | GPS location tracker with latitude/longitude |
+
+### Sensors Overview
+
+The integration creates 100+ sensors covering all vehicle data. Here are the main categories:
+
+#### Battery & Charging
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_battery` | Main battery charge level (%) |
+| `sensor.lynk_co_battery_distance` | Estimated EV range (km) |
+| `sensor.lynk_co_charge_state` | Current charging state |
+| `sensor.lynk_co_charger_connection_status` | Charger connection status |
+| `sensor.lynk_co_time_until_charged` | Minutes until fully charged |
+
+#### Fuel
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_fuel_level` | Fuel level (liters) |
+| `sensor.lynk_co_fuel_distance` | Estimated fuel range (km) |
+| `sensor.lynk_co_fuel_level_status` | Fuel level status |
+| `sensor.lynk_co_fuel_avg_consumption` | Average fuel consumption |
+
+#### Climate
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_interior_temperature` | Cabin temperature (°C) |
+| `sensor.lynk_co_exterior_temperature` | Outside temperature (°C) |
+
+#### Location
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_address` | Human-readable address |
+| `sensor.lynk_co_address_raw` | Full address components |
+| `sensor.lynk_co_latitude` | GPS latitude |
+| `sensor.lynk_co_longitude` | GPS longitude |
+| `sensor.lynk_co_altitude` | Current altitude |
+
+#### Vehicle Status
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_odometer` | Total distance (km) |
+| `sensor.lynk_co_speed` | Current speed |
+| `sensor.lynk_co_door_lock_status` | Overall lock status |
+
+#### 12V Battery
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_12v_battery` | 12V battery status |
+| `sensor.lynk_co_12v_battery_voltage` | 12V battery voltage |
+| `sensor.lynk_co_12v_battery_health` | 12V battery health |
+
+#### Maintenance
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_days_to_service` | Days until service |
+| `sensor.lynk_co_distance_to_service` | Distance until service (km) |
+| `sensor.lynk_co_service_warning_status` | Service warning indicator |
+
+#### Doors & Windows
+Individual status sensors for each door, window, trunk, hood, and tank flap.
+
+#### Tyres
+| Entity | Description |
+|--------|-------------|
+| `sensor.lynk_co_driver_front_tyre_pressure` | Front left tyre pressure |
+| `sensor.lynk_co_driver_rear_tyre_pressure` | Rear left tyre pressure |
+| `sensor.lynk_co_passenger_front_tyre_pressure` | Front right tyre pressure |
+| `sensor.lynk_co_passenger_rear_tyre_pressure` | Rear right tyre pressure |
+
+For a complete list of all entities, see [entities.md](entities.md).
+
+---
+
+## Sensor State Values
+
+### Charger Connection Status
+| Value | Meaning |
+|-------|---------|
+| `CHARGER_CONNECTION_CONNECTED_WITH_POWER` | Charger connected and providing power |
+| `CHARGER_CONNECTION_DISCONNECTED` | No charger connected |
+| `CHARGER_CONNECTION_CONNECTED_NO_POWER` | Charger connected but not charging |
+
+### Charge State
+| Value | Meaning |
+|-------|---------|
+| `CHARGE_STATE_CHARGING` | Actively charging |
+| `CHARGE_STATE_FULLY_CHARGED` | Charge complete |
+| `CHARGE_STATE_NOT_CHARGING` | Not currently charging |
+
+### Door Lock Status
+| Value | Meaning |
+|-------|---------|
+| `DOOR_LOCKS_STATUS_LOCKED` | All doors locked |
+| `DOOR_LOCKS_STATUS_SAFE_LOCKED` | All doors securely locked |
+| `DOOR_LOCKS_STATUS_UNLOCKED` | Doors unlocked |
+
+### Engine Status
+| Value | Meaning |
+|-------|---------|
+| `ENGINE_RUNNING` | Engine/EV system running |
+| `ENGINE_OFF` | Engine/EV system off |
+| `NO_ENGINE_INFO` | Status unavailable |
+
+### Fuel Level Status
+| Value | Meaning |
+|-------|---------|
+| `FUEL_LEVEL_STATUS_OK` | Fuel level normal |
+| `FUEL_LEVEL_STATUS_LOW` | Low fuel warning |
+| `FUEL_LEVEL_STATUS_VERY_LOW` | Very low fuel |
+
+### Window/Door Position Status
+| Value | Meaning |
+|-------|---------|
+| `WINDOW_STATUS_CLOSED` | Window fully closed |
+| `WINDOW_STATUS_OPEN` | Window open |
+| `WINDOW_STATUS_AJAR` | Window partially open |
+| `DOOR_OPEN_STATUS_CLOSED` | Door closed |
+| `DOOR_OPEN_STATUS_OPEN` | Door open |
+
+---
 
 ## Troubleshooting
 
-- **2FA Code Issues**: Ensure the code is entered correctly and within its validity period. Generate a new code if issues persist.
-- **Connection Issues**: Check that your vehicle is in an area with good cellular reception and that your Lynk & Co account is active and not facing any service disruptions.
+### Authentication Issues
+
+**Problem**: Login link doesn't work or authentication fails
+
+**Solutions**:
+1. Make sure you're using the complete redirect URL (starts with `msauth.com.lynkco.prod.lynkco-app://auth?code=`)
+2. Use browser Developer Tools → Network tab → filter for `msauth://prod.lynkco.app.crisp.prod/`
+3. The URL is only valid for a short time - complete the process promptly
+4. Clear browser cookies and try again if the login page seems stuck
+
+### Sensors Show "Unavailable"
+
+**Problem**: Sensors appear as unavailable after setup
+
+**Solutions**:
+1. Wait a few minutes - the first data fetch happens automatically on setup
+2. Call `lynkco.force_update_data` service to trigger a manual refresh
+3. Check Home Assistant logs for any API errors
+4. Verify your vehicle has cellular connectivity
+
+### Token Expiration
+
+**Problem**: Integration stops working after some time
+
+**Solutions**:
+1. The integration automatically refreshes tokens
+2. If automatic refresh fails, you'll need to reconfigure the integration
+3. Go to **Integrations** → **Lynk & Co** → **Delete** and set up again
+
+### Smart Polling Not Working
+
+**Problem**: Data doesn't update during expected times
+
+**Solutions**:
+1. Check if current time is within your configured active hours
+2. Remember that active hours have a random 0-20 minute offset
+3. Use `force_update_data` for immediate updates regardless of schedule
+4. Verify smart polling is enabled in options
+
+### Connection Issues
+
+**Problem**: API calls fail or timeout
+
+**Solutions**:
+1. Verify your vehicle is in an area with cellular reception
+2. Check that your Lynk & Co account is active (try the official app)
+3. The Lynk & Co API may have temporary outages - wait and retry
+
+---
 
 ## Contributing
-Contributions are welcome! You can contribute by reporting issues, suggesting features, or submitting pull requests. Please adhere to existing coding standards and commit message guidelines.
+
+Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
 
 ## Acknowledgements
-- Thanks to everyone who has contributed to this project by reporting issues, suggesting features, or submitting pull requests.
-- Appreciation to the Home Assistant community for their continuous support and contributions to the ecosystem.
+
+- Original integration by [@TobiasLaross](https://github.com/TobiasLaross)
+- Authentication fix inspired by [Donkie's fork](https://github.com/Donkie/Hass-Lynk-Co)
+- Thanks to all contributors and the Home Assistant community
+
+---
+
+**Repository**: [https://github.com/johnneerdael/Lynk-Co-HA](https://github.com/johnneerdael/Lynk-Co-HA)

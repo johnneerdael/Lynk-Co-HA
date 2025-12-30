@@ -35,12 +35,20 @@
     "step": {
       "init": {
         "title": "Lynk & Co Integration Settings",
-        "description": "Configure your Lynk & Co integration settings.",
+        "description": "Configure your Lynk & Co integration settings.\n\n**Smart Polling** adapts update frequency based on charging status and time of day. When disabled, legacy fixed interval polling is used.",
         "data": {
           "experimental": "Enable experimental features (use at your own risk)",
-          "scan_interval": "Scan Interval (minutes)",
-          "dark_hours_start": "Start of dark hours interval (no automatic updates during interval)",
-          "dark_hours_end": "End of dark hours interval (no automatic updates during interval)"
+          "smart_polling_enabled": "Enable Smart Polling (recommended for EV charging)",
+          "active_hours_start": "Active hours start (hour, random +0-20 min added)",
+          "active_hours_end": "Active hours end (hour, random +0-20 min added)",
+          "normal_interval_min": "Normal polling minimum (minutes)",
+          "normal_interval_max": "Normal polling maximum (minutes)",
+          "charging_interval_min": "Charging polling minimum (minutes)",
+          "charging_interval_max": "Charging polling maximum (minutes)",
+          "charging_target_percent": "Charging target percentage (slows polling when reached)",
+          "scan_interval": "Legacy: Fixed scan interval (minutes, used when smart polling disabled)",
+          "dark_hours_start": "Legacy: Dark hours start (hour)",
+          "dark_hours_end": "Legacy: Dark hours end (hour)"
         }
       }
     }

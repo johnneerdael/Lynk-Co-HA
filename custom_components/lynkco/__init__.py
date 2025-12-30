@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import random
 import voluptuous as vol
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.debounce import Debouncer
@@ -17,10 +18,18 @@ from homeassistant.helpers import config_validation as config_validation
 from .expected_state_monitor import ExpectedStateMonitor
 
 from .const import (
+    CONFIG_ACTIVE_HOURS_END,
+    CONFIG_ACTIVE_HOURS_START,
+    CONFIG_CHARGING_INTERVAL_MAX,
+    CONFIG_CHARGING_INTERVAL_MIN,
+    CONFIG_CHARGING_TARGET_PERCENT,
     CONFIG_DARK_HOURS_END,
     CONFIG_DARK_HOURS_START,
     CONFIG_EXPERIMENTAL_KEY,
+    CONFIG_NORMAL_INTERVAL_MAX,
+    CONFIG_NORMAL_INTERVAL_MIN,
     CONFIG_SCAN_INTERVAL_KEY,
+    CONFIG_SMART_POLLING_ENABLED,
     CONFIG_VIN_KEY,
     COORDINATOR,
     DATA_EXPECTED_STATE,
@@ -73,6 +82,11 @@ CONFIG_SCHEMA = vol.Schema(
     {DOMAIN: config_validation.empty_config_schema(DOMAIN)}, extra=vol.ALLOW_EXTRA
 )
 
+# Smart polling state storage key
+DATA_SMART_POLLING_STATE = "smart_polling_state"
+DATA_RANDOM_ACTIVE_START = "random_active_start"
+DATA_RANDOM_ACTIVE_END = "random_active_end"
+
 
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the component."""
@@ -90,14 +104,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         return True
 
     expected_state_monitor = ExpectedStateMonitor()
+    
+    # Generate random daily offsets for active hours (regenerated daily)
+    random_active_start = random.randint(0, 20)  # 0-20 minutes offset
+    random_active_end = random.randint(0, 20)    # 0-20 minutes offset
+    
     hass.data[DOMAIN][entry.entry_id] = {
-        DATA_IS_FORCE_UPDATE: False,
+        DATA_IS_FORCE_UPDATE: True,  # Force first update to bypass dark hours
         DATA_STORED_DATA: {},
         CONFIG_VIN_KEY: entry.data.get(CONFIG_VIN_KEY),
         DATA_EXPECTED_STATE: expected_state_monitor,
+        DATA_SMART_POLLING_STATE: {},
+        DATA_RANDOM_ACTIVE_START: random_active_start,
+        DATA_RANDOM_ACTIVE_END: random_active_end,
     }
 
     _LOGGER.debug(f"Experimental: {entry.options.get(CONFIG_EXPERIMENTAL_KEY, False)}")
+    _LOGGER.info("Initial setup: Forcing first data update regardless of time restrictions")
     await setup_data_coordinator(hass, entry)
 
     entry.async_on_unload(entry.add_update_listener(options_update_listener))
@@ -109,13 +132,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 async def options_update_listener(hass: HomeAssistant, entry: ConfigEntry):
     """Handle options update."""
-
-    update_interval_minutes = max(60, entry.options.get(CONFIG_SCAN_INTERVAL_KEY, 240))
-    _LOGGER.debug(f"Will update every: {update_interval_minutes} min")
-
+    smart_polling_enabled = entry.options.get(CONFIG_SMART_POLLING_ENABLED, True)
+    
+    # Regenerate random offsets when options change
+    hass.data[DOMAIN][entry.entry_id][DATA_RANDOM_ACTIVE_START] = random.randint(0, 20)
+    hass.data[DOMAIN][entry.entry_id][DATA_RANDOM_ACTIVE_END] = random.randint(0, 20)
+    
     # Retrieve and update the coordinator's interval
     coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
-    coordinator.update_interval = timedelta(minutes=update_interval_minutes)
+    
+    if smart_polling_enabled:
+        new_interval = get_smart_polling_interval(hass, entry)
+        _LOGGER.info(f"Smart polling options updated, new interval: {new_interval}")
+    else:
+        update_interval_minutes = max(15, entry.options.get(CONFIG_SCAN_INTERVAL_KEY, 120))
+        new_interval = timedelta(minutes=update_interval_minutes)
+        _LOGGER.debug(f"Legacy polling: Will update every {update_interval_minutes} min")
+    
+    coordinator.update_interval = new_interval
     await register_services(hass, entry)
     await coordinator.async_refresh()
 
@@ -236,16 +270,116 @@ async def safely_remove_service(hass: HomeAssistant, domain: str, service: str):
         hass.services.async_remove(domain, service)
 
 
+def get_smart_polling_interval(hass: HomeAssistant, entry: ConfigEntry) -> timedelta:
+    """Calculate the next polling interval based on smart polling rules."""
+    smart_polling_enabled = entry.options.get(CONFIG_SMART_POLLING_ENABLED, True)
+    
+    if not smart_polling_enabled:
+        # Fall back to legacy interval
+        interval = max(60, entry.options.get(CONFIG_SCAN_INTERVAL_KEY, 240))
+        return timedelta(minutes=interval)
+    
+    # Get configuration
+    active_start_hour = entry.options.get(CONFIG_ACTIVE_HOURS_START, 10)
+    active_end_hour = entry.options.get(CONFIG_ACTIVE_HOURS_END, 22)
+    normal_min = entry.options.get(CONFIG_NORMAL_INTERVAL_MIN, 20)
+    normal_max = entry.options.get(CONFIG_NORMAL_INTERVAL_MAX, 40)
+    charging_min = entry.options.get(CONFIG_CHARGING_INTERVAL_MIN, 8)
+    charging_max = entry.options.get(CONFIG_CHARGING_INTERVAL_MAX, 12)
+    charging_target = entry.options.get(CONFIG_CHARGING_TARGET_PERCENT, 90)
+    
+    # Get stored random offsets
+    entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
+    random_start_offset = entry_data.get(DATA_RANDOM_ACTIVE_START, 0)
+    random_end_offset = entry_data.get(DATA_RANDOM_ACTIVE_END, 0)
+    
+    # Calculate actual active hours with random offset
+    active_start_minute = 40 + random_start_offset  # 9:40 + random 0-20 = 9:40-10:00
+    if active_start_minute >= 60:
+        active_start_hour += 1
+        active_start_minute -= 60
+    
+    active_end_minute = random_end_offset  # 22:00 + random 0-20 = 22:00-22:20
+    
+    now = datetime.now()
+    current_time = now.time()
+    
+    active_start_time = time(active_start_hour, active_start_minute)
+    active_end_time = time(active_end_hour, active_end_minute)
+    
+    # Check if we're in active hours
+    if active_start_time <= current_time <= active_end_time:
+        # We're in active hours - check charging status
+        stored_data = entry_data.get(DATA_STORED_DATA, {})
+        
+        # Check charger connection status
+        charger_status = None
+        battery_level = None
+        
+        vehicle_shadow = stored_data.get("vehicle_shadow", {})
+        vehicle_record = stored_data.get("vehicle_record", {})
+        
+        if vehicle_shadow:
+            evs = vehicle_shadow.get("evs", {})
+            charger_data = evs.get("chargerStatusData", {})
+            charger_status = charger_data.get("chargerConnectionStatus")
+        
+        if vehicle_record:
+            electric_status = vehicle_record.get("electricStatus", {})
+            battery_level = electric_status.get("chargeLevel")
+        
+        # Determine if we're actively charging
+        is_charging = charger_status == "CHARGER_CONNECTION_CONNECTED_WITH_POWER"
+        is_below_target = battery_level is not None and battery_level < charging_target
+        
+        if is_charging and is_below_target:
+            # Fast polling while charging
+            interval = random.randint(charging_min, charging_max)
+            _LOGGER.debug(f"Smart polling: Charging mode, next update in {interval} minutes (battery: {battery_level}%)")
+        else:
+            # Normal active hours polling
+            interval = random.randint(normal_min, normal_max)
+            if is_charging:
+                _LOGGER.debug(f"Smart polling: Charged to target ({battery_level}%), normal interval {interval} minutes")
+            else:
+                _LOGGER.debug(f"Smart polling: Normal active hours, next update in {interval} minutes")
+        
+        return timedelta(minutes=interval)
+    else:
+        # Outside active hours - dark hours
+        # Calculate time until next active period
+        if current_time < active_start_time:
+            # Before today's active period
+            next_active = datetime.combine(now.date(), active_start_time)
+        else:
+            # After today's active period, next is tomorrow
+            next_active = datetime.combine(now.date() + timedelta(days=1), active_start_time)
+        
+        time_until_active = next_active - now
+        _LOGGER.debug(f"Smart polling: Dark hours, next update at {next_active.strftime('%H:%M')} ({time_until_active})")
+        
+        # Return a long interval but cap at 4 hours to regenerate random offsets
+        return min(time_until_active, timedelta(hours=4))
+
+
 async def setup_data_coordinator(hass: HomeAssistant, entry: ConfigEntry):
-    update_interval_minutes = max(60, entry.options.get(CONFIG_SCAN_INTERVAL_KEY, 240))
-    _LOGGER.debug(f"Will update every: {update_interval_minutes} min")
-    """Setup the data update coordinator."""
+    """Setup the data update coordinator with smart polling."""
+    smart_polling_enabled = entry.options.get(CONFIG_SMART_POLLING_ENABLED, True)
+    
+    if smart_polling_enabled:
+        initial_interval = get_smart_polling_interval(hass, entry)
+        _LOGGER.info(f"Smart polling enabled, initial interval: {initial_interval}")
+    else:
+        update_interval_minutes = max(60, entry.options.get(CONFIG_SCAN_INTERVAL_KEY, 240))
+        initial_interval = timedelta(minutes=update_interval_minutes)
+        _LOGGER.debug(f"Legacy polling: Will update every {update_interval_minutes} min")
+    
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name=f"{DOMAIN}_{entry.entry_id}_vehicle_data",
         update_method=lambda: update_data(hass, entry),
-        update_interval=timedelta(minutes=update_interval_minutes),
+        update_interval=initial_interval,
         request_refresh_debouncer=Debouncer(hass, _LOGGER, cooldown=10, immediate=True),
     )
 
@@ -260,28 +394,63 @@ async def setup_data_coordinator(hass: HomeAssistant, entry: ConfigEntry):
 
 
 async def update_data(hass: HomeAssistant, entry: ConfigEntry):
-    """Update vehicle data."""
+    """Update vehicle data with smart polling interval adjustment."""
     vin = hass.data[DOMAIN][entry.entry_id][CONFIG_VIN_KEY]
     is_force_update = hass.data[DOMAIN][entry.entry_id][DATA_IS_FORCE_UPDATE]
     hass.data[DOMAIN][entry.entry_id][DATA_IS_FORCE_UPDATE] = False
     combined_data = hass.data[DOMAIN][entry.entry_id].get(DATA_STORED_DATA, {})
-    dark_hours_start = int(entry.options.get(CONFIG_DARK_HOURS_START, 1))
-    dark_hours_end = int(entry.options.get(CONFIG_DARK_HOURS_END, 4))
+    
+    smart_polling_enabled = entry.options.get(CONFIG_SMART_POLLING_ENABLED, True)
+    
     if not vin:
         _LOGGER.error("Missing VIN for vehicle data update.")
         raise UpdateFailed("Missing VIN.")
+    
     now = datetime.now()
-    is_interval_spanning_two_days = dark_hours_end < dark_hours_start
-    is_current_time_in_dark_hours = (
-        is_interval_spanning_two_days
-        and (now.hour >= dark_hours_start or now.hour < dark_hours_end)
-    ) or (
-        not is_interval_spanning_two_days
-        and dark_hours_start <= now.hour < dark_hours_end
-    )
-    if not is_force_update and (is_current_time_in_dark_hours):
-        _LOGGER.debug("Skipping automatic update due to time restrictions.")
-        return combined_data
+    
+    # Handle dark hours check for legacy mode
+    if not smart_polling_enabled:
+        dark_hours_start = int(entry.options.get(CONFIG_DARK_HOURS_START, 1))
+        dark_hours_end = int(entry.options.get(CONFIG_DARK_HOURS_END, 4))
+        is_interval_spanning_two_days = dark_hours_end < dark_hours_start
+        is_current_time_in_dark_hours = (
+            is_interval_spanning_two_days
+            and (now.hour >= dark_hours_start or now.hour < dark_hours_end)
+        ) or (
+            not is_interval_spanning_two_days
+            and dark_hours_start <= now.hour < dark_hours_end
+        )
+        if not is_force_update and is_current_time_in_dark_hours:
+            _LOGGER.debug("Skipping automatic update due to time restrictions (legacy mode).")
+            return combined_data
+    else:
+        # Smart polling: check if we're in dark hours
+        active_start_hour = entry.options.get(CONFIG_ACTIVE_HOURS_START, 10)
+        active_end_hour = entry.options.get(CONFIG_ACTIVE_HOURS_END, 22)
+        
+        entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
+        random_start_offset = entry_data.get(DATA_RANDOM_ACTIVE_START, 0)
+        random_end_offset = entry_data.get(DATA_RANDOM_ACTIVE_END, 0)
+        
+        active_start_minute = 40 + random_start_offset
+        if active_start_minute >= 60:
+            active_start_hour += 1
+            active_start_minute -= 60
+        active_end_minute = random_end_offset
+        
+        current_time = now.time()
+        active_start_time = time(active_start_hour, active_start_minute)
+        active_end_time = time(active_end_hour, active_end_minute)
+        
+        is_in_dark_hours = not (active_start_time <= current_time <= active_end_time)
+        
+        if not is_force_update and is_in_dark_hours:
+            _LOGGER.debug(f"Smart polling: Dark hours, skipping update. Active: {active_start_time}-{active_end_time}")
+            # Regenerate random offsets for next day
+            if now.hour == 0:  # Midnight - regenerate offsets
+                hass.data[DOMAIN][entry.entry_id][DATA_RANDOM_ACTIVE_START] = random.randint(0, 20)
+                hass.data[DOMAIN][entry.entry_id][DATA_RANDOM_ACTIVE_END] = random.randint(0, 20)
+            return combined_data
 
     record, shadow = await asyncio.gather(
         async_fetch_vehicle_record_data(hass, vin),
@@ -326,6 +495,16 @@ async def update_data(hass: HomeAssistant, entry: ConfigEntry):
     combined_data["vehicle_address"] = address
     combined_data["vehicle_address_raw"] = address_raw
     hass.data[DOMAIN][entry.entry_id][DATA_STORED_DATA] = combined_data
+    
+    # Update the coordinator's interval for smart polling (after we have fresh data)
+    if smart_polling_enabled:
+        coordinator = hass.data[DOMAIN][entry.entry_id].get(COORDINATOR)
+        if coordinator:
+            new_interval = get_smart_polling_interval(hass, entry)
+            if coordinator.update_interval != new_interval:
+                coordinator.update_interval = new_interval
+                _LOGGER.debug(f"Smart polling: Updated interval to {new_interval}")
+    
     return combined_data
 
 

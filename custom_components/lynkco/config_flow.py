@@ -11,15 +11,23 @@ from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
     CONFIG_2FA_KEY,
+    CONFIG_ACTIVE_HOURS_END,
+    CONFIG_ACTIVE_HOURS_START,
+    CONFIG_CHARGING_INTERVAL_MAX,
+    CONFIG_CHARGING_INTERVAL_MIN,
+    CONFIG_CHARGING_TARGET_PERCENT,
     CONFIG_DARK_HOURS_END,
     CONFIG_DARK_HOURS_START,
     CONFIG_EMAIL_KEY,
     CONFIG_EXPERIMENTAL_KEY,
     CONFIG_LOGIN_METHOD_DIRECT,
     CONFIG_LOGIN_METHOD_REDIRECT,
+    CONFIG_NORMAL_INTERVAL_MAX,
+    CONFIG_NORMAL_INTERVAL_MIN,
     CONFIG_PASSWORD_KEY,
     CONFIG_REDIRECT_URI_KEY,
     CONFIG_SCAN_INTERVAL_KEY,
+    CONFIG_SMART_POLLING_ENABLED,
     CONFIG_VIN_KEY,
     DOMAIN,
     STORAGE_REFRESH_TOKEN_KEY,
@@ -276,6 +284,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # Save the options and conclude the options flow
             return self.async_create_entry(title="", data=user_input)
 
+        # Check if smart polling is enabled to show relevant options
+        smart_polling_enabled = self.config_entry.options.get(
+            CONFIG_SMART_POLLING_ENABLED, True
+        )
+
         data_schema = vol.Schema(
             {
                 vol.Required(
@@ -284,12 +297,61 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         CONFIG_EXPERIMENTAL_KEY, False
                     ),
                 ): bool,
+                # Smart polling toggle
+                vol.Required(
+                    CONFIG_SMART_POLLING_ENABLED,
+                    default=smart_polling_enabled,
+                ): bool,
+                # Smart polling options
+                vol.Required(
+                    CONFIG_ACTIVE_HOURS_START,
+                    default=self.config_entry.options.get(
+                        CONFIG_ACTIVE_HOURS_START, 9
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=23)),
+                vol.Required(
+                    CONFIG_ACTIVE_HOURS_END,
+                    default=self.config_entry.options.get(
+                        CONFIG_ACTIVE_HOURS_END, 22
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=23)),
+                vol.Required(
+                    CONFIG_NORMAL_INTERVAL_MIN,
+                    default=self.config_entry.options.get(
+                        CONFIG_NORMAL_INTERVAL_MIN, 20
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
+                vol.Required(
+                    CONFIG_NORMAL_INTERVAL_MAX,
+                    default=self.config_entry.options.get(
+                        CONFIG_NORMAL_INTERVAL_MAX, 40
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
+                vol.Required(
+                    CONFIG_CHARGING_INTERVAL_MIN,
+                    default=self.config_entry.options.get(
+                        CONFIG_CHARGING_INTERVAL_MIN, 8
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=2, max=30)),
+                vol.Required(
+                    CONFIG_CHARGING_INTERVAL_MAX,
+                    default=self.config_entry.options.get(
+                        CONFIG_CHARGING_INTERVAL_MAX, 12
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=2, max=30)),
+                vol.Required(
+                    CONFIG_CHARGING_TARGET_PERCENT,
+                    default=self.config_entry.options.get(
+                        CONFIG_CHARGING_TARGET_PERCENT, 90
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=50, max=100)),
+                # Legacy options (kept for backward compatibility)
                 vol.Required(
                     CONFIG_SCAN_INTERVAL_KEY,
                     default=self.config_entry.options.get(
                         CONFIG_SCAN_INTERVAL_KEY, 120
                     ),
-                ): vol.All(vol.Coerce(int), vol.Range(min=60, max=1440)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=15, max=1440)),
                 vol.Required(
                     CONFIG_DARK_HOURS_START,
                     default=self.config_entry.options.get(CONFIG_DARK_HOURS_START, 1),
