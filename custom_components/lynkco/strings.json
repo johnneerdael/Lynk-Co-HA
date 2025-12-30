@@ -3,40 +3,15 @@
   "config": {
     "step": {
       "user": {
-        "menu_options": {
-          "direct_login": "Direct Login",
-          "redirect_login": "Redirect Login"
-        },
-        "menu_option_descriptions": {
-          "direct_login": "Standard way, login with email and password. Try this first.",
-          "redirect_login": "If direct login fails, use this method which requires browser interaction."
-        }
-      },
-      "direct_login": {
-        "title": "Direct Login",
-        "description": "Please enter your credentials.",
+        "title": "Login to Lynk & Co",
+        "description": "To authenticate, please follow these steps:\n\n1. Click the link below to open the Lynk & Co login page:\n\n**[Open Login Page]({auth_url})**\n\n2. Complete the login process (including any CAPTCHA and 2FA SMS code).\n\n3. After login, the browser will try to redirect to a URL starting with `msauth://...` - this will **fail** (that's expected).\n\n4. Open your browser's developer console (press F12), go to the Console tab, and find the failed redirect URL.\n\n5. Copy the entire URL (starting with `msauth://prod.lynkco.app.crisp.prod/...`) and paste it below.",
         "data": {
-          "email": "Email Address",
-          "password": "Password"
-        }
-      },
-      "direct_login_2fa": {
-        "title": "2FA Verification",
-        "description": "Enter the 2FA code sent to your phone.",
-        "data": {
-          "2fa": "Two-Factor Authentication Code"
-        }
-      },
-      "redirect_login": {
-        "title": "Redirect Login",
-        "description": "1. Open the following URL in your browser:\n\n{auth_url}\n\n2. Complete the login process (including CAPTCHA and 2FA).\n3. After login, the browser will try to redirect to a URL starting with 'msauth://...'. This redirect will fail.\n4. Open your browser's developer console (F12) and copy the failed redirect URL.\n5. Paste the URL below.",
-        "data": {
-          "redirect_uri": "Redirect URI (starts with msauth://...)"
+          "redirect_uri": "Redirect URI from browser console"
         }
       },
       "reauth": {
         "title": "Re-authentication Required",
-        "description": "Please re-authenticate your Lynk & Co account."
+        "description": "Please re-authenticate your Lynk & Co account using the same process as initial setup."
       }
     },
     "error": {

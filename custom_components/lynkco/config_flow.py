@@ -125,15 +125,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_user(self, user_input=None):
-        """Handle a flow initialized by the user."""
+        """Handle a flow initialized by the user - goes directly to redirect login."""
+        # Generate the auth URL on first entry
+        if "login_code_verifier" not in self.context:
+            auth_url, code_verifier, _ = get_auth_uri()
+            self.context["login_code_verifier"] = code_verifier
+            self.context["auth_url"] = auth_url
 
-        return self.async_show_menu(
-            step_id="user",
-            menu_options=[CONFIG_LOGIN_METHOD_DIRECT, CONFIG_LOGIN_METHOD_REDIRECT],
-        )
-
-    async def async_step_redirect_login(self, user_input=None):
-        """Handle the redirect login flow."""
         errors = {}
 
         if user_input:
@@ -144,30 +142,31 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not is_valid_redirect_uri(redirect_uri):
                     errors["redirect_uri"] = "invalid_redirect_uri"
                 else:
-                    async with aiohttp.ClientSession() as session:
-                        (
-                            access_token,
-                            refresh_token,
-                            id_token,
-                        ) = await get_tokens_from_redirect_uri(
-                            redirect_uri, login_code_verifier, session
-                        )
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            (
+                                access_token,
+                                refresh_token,
+                                id_token,
+                            ) = await get_tokens_from_redirect_uri(
+                                redirect_uri, login_code_verifier, session
+                            )
 
-                    if access_token and refresh_token and id_token:
-                        return await self._finalize_with_tokens(
-                            access_token, refresh_token, id_token
-                        )
-                    errors["base"] = "token_error"
+                        if access_token and refresh_token and id_token:
+                            return await self._finalize_with_tokens(
+                                access_token, refresh_token, id_token
+                            )
+                        errors["base"] = "token_error"
+                    except Exception as e:
+                        _LOGGER.error("Error getting tokens: %s", e, exc_info=True)
+                        errors["base"] = "token_error"
             else:
                 errors["base"] = "missing_details"
 
-        auth_url, code_verifier, _ = get_auth_uri()
-        self.context["login_code_verifier"] = code_verifier
-
         return self.async_show_form(
-            step_id="redirect_login",
+            step_id="user",
             data_schema=STEP_REDIRECT_LOGIN_DATA_SCHEMA,
-            description_placeholders={"auth_url": auth_url},
+            description_placeholders={"auth_url": self.context.get("auth_url", "")},
             errors=errors,
         )
 
