@@ -1,10 +1,13 @@
+"""Config flow for Lynk & Co integration."""
+
 import logging
 import re
 
+import aiohttp
 import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
-import aiohttp
 
 from .const import (
     CONFIG_2FA_KEY,
@@ -12,41 +15,60 @@ from .const import (
     CONFIG_DARK_HOURS_START,
     CONFIG_EMAIL_KEY,
     CONFIG_EXPERIMENTAL_KEY,
+    CONFIG_LOGIN_METHOD_DIRECT,
+    CONFIG_LOGIN_METHOD_REDIRECT,
     CONFIG_PASSWORD_KEY,
+    CONFIG_REDIRECT_URI_KEY,
     CONFIG_SCAN_INTERVAL_KEY,
     CONFIG_VIN_KEY,
     DOMAIN,
     STORAGE_REFRESH_TOKEN_KEY,
 )
-from .login_flow import login, two_factor_authentication
-from .token_manager import STORAGE_CCC_TOKEN_KEY, get_token_storage, send_device_login
+from .login_flow import (
+    get_auth_uri,
+    get_tokens_from_redirect_uri,
+    get_user_vins,
+    login,
+    two_factor_authentication,
+)
+from .token_manager import (
+    STORAGE_CCC_TOKEN_KEY,
+    decode_jwt_token,
+    get_token_storage,
+    send_device_login,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
+STEP_DIRECT_LOGIN_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONFIG_EMAIL_KEY): str,
         vol.Required(CONFIG_PASSWORD_KEY): str,
-        vol.Required(CONFIG_VIN_KEY): str,
     }
 )
 
-STEP_TWO_FA_DATA_SCHEMA = vol.Schema(
+STEP_DIRECT_LOGIN_2FA_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONFIG_2FA_KEY): str,
     }
 )
 
+STEP_REDIRECT_LOGIN_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONFIG_REDIRECT_URI_KEY): str,
+    }
+)
+
 
 def is_valid_email(email: str) -> bool:
+    """Validate the email format using a regex pattern."""
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return bool(re.match(pattern, email))
 
 
-def is_valid_vin(vin: str) -> bool:
-    """Validate the VIN based on length and allowed characters."""
-    vin_regex = r"^[A-HJ-NPR-Z0-9]{17}$"
-    return bool(re.match(vin_regex, vin))
+def is_valid_redirect_uri(redirect_uri: str) -> bool:
+    """Basic validation for redirect URI format."""
+    return redirect_uri.startswith("msauth://prod.lynkco.app.crisp.prod/")
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -54,232 +76,202 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    def __init__(self):
-        """Initialize the config flow."""
-        self._session: aiohttp.ClientSession | None = None
-        self._email: str | None = None
-        self._password: str | None = None
-        self._vin: str | None = None
-        self._login_details: dict | None = None
-        self._reauth_entry = None
-
     @staticmethod
     def async_get_options_flow(config_entry):
         """Return the options flow handler."""
-        return OptionsFlowHandler(config_entry)
+        return OptionsFlowHandler()
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create the aiohttp session."""
-        if self._session is None or self._session.closed:
-            jar = aiohttp.CookieJar(quote_cookie=False)
-            self._session = aiohttp.ClientSession(cookie_jar=jar)
-        return self._session
+    async def _finalize_with_tokens(
+        self, access_token: str, refresh_token: str, id_token: str
+    ) -> config_entries.ConfigFlowResult:
+        token_storage = get_token_storage(self.hass)
+        tokens = await token_storage.async_load() or {}
+        tokens[STORAGE_REFRESH_TOKEN_KEY] = refresh_token
+        ccc_token = await send_device_login(access_token)
+        if ccc_token:
+            tokens[STORAGE_CCC_TOKEN_KEY] = ccc_token
+        else:
+            _LOGGER.error("New ccc token is none")
+        await token_storage.async_save(tokens)
 
-    async def _close_session(self) -> None:
-        """Close the aiohttp session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        # Decode User ID from ID Token (the JWT payload)
+        claims = decode_jwt_token(id_token)
+        user_id = claims.get("snowflakeId")
 
-    async def async_step_user(self, user_input=None):
-        """Handle a flow initialized by the user."""
-        errors = {}
+        # Retrieve VINs by querying the API
+        vins = await get_user_vins(ccc_token, user_id) if ccc_token and user_id else []
+        # For simplicity, we take the first VIN
+        vin = vins[0] if vins else None
+        if not vin:
+            _LOGGER.error("No VINs found for the user")
+            return self.async_abort(reason="no_vins_found")
 
-        if user_input is None:
-            return self.async_show_form(
-                step_id="user",
-                data_schema=STEP_USER_DATA_SCHEMA,
-                errors=errors,
+        if hasattr(self, "_reauth_entry"):
+            # Update the existing config entry
+            self.hass.config_entries.async_update_entry(
+                self._reauth_entry,
+                data={CONFIG_VIN_KEY: vin},
             )
+            await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
+            return self.async_abort(reason="reauth_successful")
 
-        # Validate input
-        email = user_input.get("email", "").strip()
-        password = user_input.get("password", "")
-        vin = user_input.get("vin", "").strip().upper()
-
-        if not email or not password or not vin:
-            errors["base"] = "missing_details"
-        elif not is_valid_email(email):
-            errors["email"] = "invalid_email"
-        elif not is_valid_vin(vin):
-            errors["vin"] = "invalid_vin"
-
-        if errors:
-            return self.async_show_form(
-                step_id="user",
-                data_schema=STEP_USER_DATA_SCHEMA,
-                errors=errors,
-            )
-
-        # Store credentials for use in 2FA step
-        self._email = email
-        self._password = password
-        self._vin = vin
-
-        # Get session and attempt login
-        session = await self._get_session()
-        
-        try:
-            login_result = await login(email, password, session)
-            (
-                x_ms_cpim_trans_value,
-                x_ms_cpim_csrf_token,
-                page_view_id,
-                referer_url,
-                code_verifier,
-            ) = login_result
-
-            if None in (x_ms_cpim_trans_value, x_ms_cpim_csrf_token):
-                errors["base"] = "login_failed"
-                await self._close_session()
-                return self.async_show_form(
-                    step_id="user",
-                    data_schema=STEP_USER_DATA_SCHEMA,
-                    errors=errors,
-                )
-
-            # Store login details for 2FA step
-            self._login_details = {
-                "x_ms_cpim_trans_value": x_ms_cpim_trans_value,
-                "x_ms_cpim_csrf_token": x_ms_cpim_csrf_token,
-                "page_view_id": page_view_id,
-                "referer_url": referer_url,
-                "code_verifier": code_verifier,
-            }
-
-            # Proceed to 2FA step
-            return await self.async_step_two_factor()
-
-        except Exception as e:
-            _LOGGER.error("Error during login: %s", e, exc_info=True)
-            errors["base"] = "login_failed"
-            await self._close_session()
-            return self.async_show_form(
-                step_id="user",
-                data_schema=STEP_USER_DATA_SCHEMA,
-                errors=errors,
-            )
-
-    async def async_step_two_factor(self, user_input=None):
-        """Handle the 2FA verification step."""
-        errors = {}
-
-        if user_input is None:
-            return self.async_show_form(
-                step_id="two_factor",
-                data_schema=STEP_TWO_FA_DATA_SCHEMA,
-                errors=errors,
-                description_placeholders={
-                    "email": self._email,
-                },
-            )
-
-        two_fa_code = user_input.get("2fa", "").strip()
-        
-        if not two_fa_code:
-            errors["base"] = "missing_2fa_code"
-            return self.async_show_form(
-                step_id="two_factor",
-                data_schema=STEP_TWO_FA_DATA_SCHEMA,
-                errors=errors,
-            )
-
-        session = await self._get_session()
-
-        try:
-            access_token, refresh_token = await two_factor_authentication(
-                two_fa_code,
-                self._login_details.get("x_ms_cpim_trans_value"),
-                self._login_details.get("x_ms_cpim_csrf_token"),
-                self._login_details.get("page_view_id"),
-                self._login_details.get("referer_url"),
-                self._login_details.get("code_verifier"),
-                session,
-            )
-
-            if not access_token or not refresh_token:
-                errors["base"] = "invalid_2fa_code"
-                return self.async_show_form(
-                    step_id="two_factor",
-                    data_schema=STEP_TWO_FA_DATA_SCHEMA,
-                    errors=errors,
-                )
-
-            # Success - save tokens and create/update entry
-            await self._close_session()
-
-            token_storage = get_token_storage(self.hass)
-            tokens = await token_storage.async_load() or {}
-            tokens[STORAGE_REFRESH_TOKEN_KEY] = refresh_token
-            
-            ccc_token = await send_device_login(access_token)
-            if ccc_token:
-                tokens[STORAGE_CCC_TOKEN_KEY] = ccc_token
-            else:
-                _LOGGER.error("Failed to obtain CCC token")
-                errors["base"] = "token_error"
-                return self.async_show_form(
-                    step_id="two_factor",
-                    data_schema=STEP_TWO_FA_DATA_SCHEMA,
-                    errors=errors,
-                )
-            
-            await token_storage.async_save(tokens)
-
-            # Handle reauth vs new entry
-            if self._reauth_entry:
-                self.hass.config_entries.async_update_entry(
-                    self._reauth_entry,
-                    data={"vin": self._vin},
-                )
-                await self.hass.config_entries.async_reload(
-                    self._reauth_entry.entry_id
-                )
-                return self.async_abort(reason="reauth_successful")
-            
-            return self.async_create_entry(
-                title="Lynk & Co",
-                data={"vin": self._vin},
-            )
-
-        except Exception as e:
-            _LOGGER.error(
-                "Error during two-factor authentication: %s", e, exc_info=True
-            )
-            errors["base"] = "two_factor_auth_failed"
-            return self.async_show_form(
-                step_id="two_factor",
-                data_schema=STEP_TWO_FA_DATA_SCHEMA,
-                errors=errors,
-            )
-
-    async def async_step_reauth(self, user_input=None):
-        """Handle re-authentication flow."""
-        self._reauth_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
-        self._vin = self._reauth_entry.data.get(CONFIG_VIN_KEY) if self._reauth_entry else None
-        return await self.async_step_reauth_confirm()
-
-    async def async_step_reauth_confirm(self, user_input=None):
-        """Handle reauth confirmation."""
-        if user_input is not None:
-            return await self.async_step_user(user_input)
-
-        return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=STEP_USER_DATA_SCHEMA,
-            errors={},
+        # Create new entry
+        return self.async_create_entry(
+            title="Lynk & Co",
+            data={CONFIG_VIN_KEY: vin},
             description_placeholders={
-                "message": "Please re-enter your credentials to re-authenticate."
+                "additional_configuration": "Please use the configuration to enable experimental features."
             },
         )
 
+    async def async_step_user(self, user_input=None):
+        """Handle a flow initialized by the user."""
+
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=[CONFIG_LOGIN_METHOD_DIRECT, CONFIG_LOGIN_METHOD_REDIRECT],
+        )
+
+    async def async_step_redirect_login(self, user_input=None):
+        """Handle the redirect login flow."""
+        errors = {}
+
+        if user_input:
+            redirect_uri = user_input.get(CONFIG_REDIRECT_URI_KEY)
+            login_code_verifier = self.context.get("login_code_verifier")
+
+            if redirect_uri and login_code_verifier:
+                if not is_valid_redirect_uri(redirect_uri):
+                    errors["redirect_uri"] = "invalid_redirect_uri"
+                else:
+                    async with aiohttp.ClientSession() as session:
+                        (
+                            access_token,
+                            refresh_token,
+                            id_token,
+                        ) = await get_tokens_from_redirect_uri(
+                            redirect_uri, login_code_verifier, session
+                        )
+
+                    if access_token and refresh_token and id_token:
+                        return await self._finalize_with_tokens(
+                            access_token, refresh_token, id_token
+                        )
+                    errors["base"] = "token_error"
+            else:
+                errors["base"] = "missing_details"
+
+        auth_url, code_verifier, _ = get_auth_uri()
+        self.context["login_code_verifier"] = code_verifier
+
+        return self.async_show_form(
+            step_id="redirect_login",
+            data_schema=STEP_REDIRECT_LOGIN_DATA_SCHEMA,
+            description_placeholders={"auth_url": auth_url},
+            errors=errors,
+        )
+
+    async def async_step_direct_login(self, user_input=None):
+        """Handle a flow initialized by the user."""
+        errors = {}
+
+        jar = aiohttp.CookieJar(quote_cookie=False)
+        session = aiohttp.ClientSession(cookie_jar=jar)
+        self.context["session"] = session
+
+        if user_input:
+            email = user_input.get("email")
+            password = user_input.get("password")
+
+            if not email or not password:
+                errors["base"] = "missing_details"
+            elif not is_valid_email(email):
+                errors["email"] = "invalid_email"
+
+            if not errors:
+                (
+                    x_ms_cpim_trans_value,
+                    x_ms_cpim_csrf_token,
+                    page_view_id,
+                    referer_url,
+                    code_verifier,
+                ) = await login(email, password, session)
+
+                if None not in (x_ms_cpim_trans_value, x_ms_cpim_csrf_token):
+                    self.context["login_details"] = {
+                        "x_ms_cpim_trans_value": x_ms_cpim_trans_value,
+                        "x_ms_cpim_csrf_token": x_ms_cpim_csrf_token,
+                        "page_view_id": page_view_id,
+                        "referer_url": referer_url,
+                        "code_verifier": code_verifier,
+                    }
+                    return await self.async_step_direct_login_2fa()
+                # Handle the case where any of the required items are None
+                errors["base"] = "login_failed"
+            else:
+                # Re-show the form with errors if validation fails
+                return self.async_show_form(
+                    step_id="direct_login",
+                    data_schema=STEP_DIRECT_LOGIN_DATA_SCHEMA,
+                    errors=errors,
+                )
+        return self.async_show_form(
+            step_id="direct_login",
+            data_schema=STEP_DIRECT_LOGIN_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_direct_login_2fa(self, user_input=None):
+        """Handle the second step for inputting the 2FA code."""
+        errors = {}
+        session = self.context.get("session")
+
+        if user_input is not None:
+            two_fa_code = user_input.get("2fa")
+            login_details = self.context.get("login_details", {})
+
+            try:
+                access_token, refresh_token, id_token = await two_factor_authentication(
+                    two_fa_code,
+                    login_details.get("x_ms_cpim_trans_value"),
+                    login_details.get("x_ms_cpim_csrf_token"),
+                    login_details.get("page_view_id"),
+                    login_details.get("referer_url"),
+                    login_details.get("code_verifier"),
+                    session,
+                )
+
+                # Close the session
+                await session.close()
+
+                if access_token and refresh_token and id_token:
+                    return await self._finalize_with_tokens(
+                        access_token, refresh_token, id_token
+                    )
+                errors["base"] = "invalid_2fa_code"
+            except Exception as e:
+                _LOGGER.error(
+                    "Error during two-factor authentication: %s", e, exc_info=True
+                )
+                errors["base"] = "two_factor_auth_failed"
+
+        # Show the form again with any errors
+        return self.async_show_form(
+            step_id="direct_login_2fa",
+            data_schema=STEP_DIRECT_LOGIN_2FA_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_reauth(self, user_input=None):
+        """Handle the re-authentication flow."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+
+        return await self.async_step_user(user_input)
+
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self._config_entry = config_entry
-
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:
             # Save the options and conclude the options flow

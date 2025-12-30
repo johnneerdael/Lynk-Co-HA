@@ -25,7 +25,7 @@ ccc_token_lock = asyncio.Lock()
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
 
 
-async def decode_jwt_token(token):
+def decode_jwt_token(token):
     """Decode JWT token without signature verification."""
     payload = token.split(".")[1]
     payload += "=" * (-len(payload) % 4)
@@ -36,7 +36,7 @@ async def decode_jwt_token(token):
 
 async def is_token_expired(token):
     """Check if the JWT token is expired."""
-    decoded_token = await decode_jwt_token(token)
+    decoded_token = decode_jwt_token(token)
     current_time = time.time()
     return decoded_token["exp"] < current_time
 
