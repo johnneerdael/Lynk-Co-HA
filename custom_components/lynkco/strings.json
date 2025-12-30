@@ -12,22 +12,26 @@
         }
       },
       "two_factor": {
-        "title": "2FA Verification",
-        "description": "Enter the 2FA code.",
+        "title": "Two-Factor Authentication",
+        "description": "A verification code has been sent to your phone. Please enter it below.",
         "data": {
-          "2fa": "Two-Factor Authentication Code"
+          "2fa": "Verification Code"
         }
       },
-      "reauth": {
+      "reauth_confirm": {
         "title": "Re-authentication Required",
-        "description": "Please re-enter your credentials to re-authenticate."
+        "description": "Your session has expired. Please re-enter your credentials."
       }
     },
     "error": {
-      "invalid_email": "The provided email is invalid. Please check and try again.",
-      "invalid_vin": "The provided VIN is invalid. Please check and try again.",
-      "invalid_2fa_code": "The provided 2FA code is invalid. Please check and try again.",
-      "login_failed": "Login failed. Please check your credentials and try again."
+      "invalid_email": "The provided email is invalid.",
+      "invalid_vin": "The provided VIN is invalid.",
+      "invalid_2fa_code": "The 2FA code is invalid or expired. Please try again.",
+      "login_failed": "Login failed. Please check your credentials.",
+      "missing_details": "Please fill in all required fields.",
+      "missing_2fa_code": "Please enter the 2FA code.",
+      "two_factor_auth_failed": "Two-factor authentication failed. Please try again.",
+      "token_error": "Failed to obtain authentication token."
     },
     "abort": {
       "unexpected_error": "An unexpected error occurred.",
