@@ -1,17 +1,17 @@
 {
     "domain": "lynkco",
-    "name": "Lynk & Co",
+    "name": "Lynk & Co Home Assistant",
     "codeowners": [
-        "@TobiasLaross"
+        "@johnneerdael"
     ],
     "config_flow": true,
-    "documentation": "https://www.github.com/tobiaslaross/Hass-Lynk-Co",
+    "documentation": "https://www.github.com/johnneerdael/Lynk-Co-HA",
     "iot_class": "cloud_polling",
-    "issue_tracker": "https://github.com/tobiaslaross/Hass-Lynk-Co/issues",
+    "issue_tracker": "https://github.com/johnneerdael/Lynk-Co-HAissues",
     "requirements": [
         "requests>=2.31.0",
         "pkce>=1.0.3",
         "yarl>=1.9.0"
     ],
-    "version": "1.11.0"
+    "version": "1.12.0"
 }
